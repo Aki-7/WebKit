@@ -50,7 +50,9 @@ namespace WebCore {
     macro(shadowOffset) \
     macro(roundedRectNumber) \
     macro(roundedRect) \
-    macro(roundedRectInverseTransformMatrix)
+    macro(roundedRectInverseTransformMatrix) \
+    macro(textureCopyMatrix) \
+    macro(textureBlurMatrix)
 
 #define TEXMAP_SAMPLER_VARIABLES(macro)           \
     macro(sampler)                                \
@@ -105,6 +107,7 @@ public:
         RoundedRectClip  = 1L << 23,
         Premultiply      = 1L << 24,
         TextureYUVA      = 1L << 25,
+        TextureCopy      = 1L << 26,
     };
 
     enum class VariableID {
@@ -157,6 +160,7 @@ template<> struct EnumTraits<WebCore::TextureMapperShaderProgram::Option> {
         WebCore::TextureMapperShaderProgram::ContrastFilter,
         WebCore::TextureMapperShaderProgram::InvertFilter,
         WebCore::TextureMapperShaderProgram::OpacityFilter,
+        WebCore::TextureMapperShaderProgram::TextureCopy,
         WebCore::TextureMapperShaderProgram::BlurFilter,
         WebCore::TextureMapperShaderProgram::AlphaBlur,
         WebCore::TextureMapperShaderProgram::ContentTexture,

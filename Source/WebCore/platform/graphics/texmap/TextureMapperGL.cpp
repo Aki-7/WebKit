@@ -854,17 +854,141 @@ static int getPassesRequiredForFilter(const FilterOperation& filter)
     case FilterOperation::Type::Contrast:
     case FilterOperation::Type::Opacity:
         return 1;
-    case FilterOperation::Type::Blur:
     case FilterOperation::Type::DropShadow:
-        // We use two-passes (vertical+horizontal) for blur and drop-shadow.
+        // We use two-passes (vertical+horizontal) for drop-shadow.
         return 2;
+    case FilterOperation::Type::Blur:
+        ASSERT_NOT_REACHED();
     default:
         return 0;
     }
 }
 
+void TextureMapperGL::drawTextureCopy(const BitmapTexture& sourceTexture, const FloatRect& sourceRect, const FloatRect& targetRect)
+{
+    Ref<TextureMapperShaderProgram> program = data().getShaderProgram({TextureMapperShaderProgram::TextureCopy});
+
+    glUseProgram(program->programID());
+
+    auto textureCopyMatrix = TransformationMatrix::identity;
+
+    textureCopyMatrix.scale3d(
+        double(sourceRect.width()) / sourceTexture.contentSize().width(),
+        double(sourceRect.height()) / sourceTexture.contentSize().height(),
+        1.
+    ).translate3d(
+        double(sourceRect.x()) / sourceTexture.contentSize().width(),
+        double(sourceRect.y()) / sourceTexture.contentSize().height(),
+        0.
+    );
+
+    program->setMatrix(program->textureCopyMatrixLocation(), textureCopyMatrix);
+
+    drawTexturedQuadWithProgram(program.get(), static_cast<const BitmapTextureGL&>(sourceTexture).id(), 0, targetRect, TransformationMatrix(), 1);
+}
+
+void TextureMapperGL::drawBlurred(const BitmapTexture& sourceTexture, const FloatRect& rect, const FloatSize radius)
+{
+    Ref<TextureMapperShaderProgram> program = data().getShaderProgram({TextureMapperShaderProgram::BlurFilter});
+
+    glUseProgram(program->programID());
+
+    glUniform2f(program->blurRadiusLocation(), radius.width(), radius.height());
+    glUniform1fv(program->gaussianKernelLocation(), GaussianKernelHalfWidth, gaussianKernel());
+
+    auto textureBlurMatrix = TransformationMatrix::identity;
+
+    textureBlurMatrix.scale3d(
+        double(rect.width()) / sourceTexture.contentSize().width(),
+        double(rect.height()) / sourceTexture.contentSize().height(),
+        1.
+    ).translate3d(
+        double(rect.x()) / sourceTexture.contentSize().width(),
+        double(rect.y()) / sourceTexture.contentSize().height(),
+        0.
+    );
+
+    program->setMatrix(program->textureBlurMatrixLocation(), textureBlurMatrix);
+
+    drawTexturedQuadWithProgram(program.get(), static_cast<const BitmapTextureGL&>(sourceTexture).id(), 0, rect, TransformationMatrix(), 1);
+}
+
+RefPtr<BitmapTexture> TextureMapperGL::applyBlurFilter(RefPtr<BitmapTexture> sourceTexture, const BlurFilterOperation& blurFilter)
+{
+    IntSize textureSize = sourceTexture->contentSize();
+    RefPtr<BitmapTexture> resultTexture = acquireTextureFromPool(textureSize, BitmapTexture::SupportsAlpha);
+    IntSize currentSize = textureSize;
+    IntSize maxSize;
+
+    {
+        float kernelHalfLength = (GaussianKernelHalfWidth - 1) * GaussianKernelStep;
+        float radiusX = kernelHalfLength * floatValueForLength(blurFilter.stdDeviation(), textureSize.width());
+        float radiusY = kernelHalfLength * floatValueForLength(blurFilter.stdDeviation(), textureSize.height());
+        float maxRadius = GaussianKernelHalfWidth - 1;
+
+        float scaleX = maxRadius / radiusX;
+        float scaleY = maxRadius / radiusY;
+        maxSize.setWidth(std::max(floorf(textureSize.width() * scaleX), 1.f));
+        maxSize.setHeight(std::max(floorf(textureSize.height() * scaleY), 1.f));
+    }
+
+    // Shrink texture content if blur radius is too large
+    while(currentSize.width() > maxSize.width() || currentSize.height() > maxSize.height()) {
+        IntSize nextSize(
+            std::max((currentSize.width() + 1) / 2, maxSize.width()),
+            std::max((currentSize.height() + 1) / 2, maxSize.height())
+        );
+
+        FloatRect sourceRect(IntPoint::zero(), currentSize);
+        FloatRect targetRect(IntPoint::zero(), nextSize);
+
+        bindSurface(resultTexture.get());
+
+        drawTextureCopy(*sourceTexture, sourceRect, targetRect);
+
+        currentSize = nextSize;
+
+        std::swap(resultTexture, sourceTexture);
+    }
+
+    // Apply blur
+    for (int i = 0; i < 2; i ++) {
+        bindSurface(resultTexture.get());
+
+        FloatRect rect(FloatPoint::zero(), currentSize);
+
+        FloatSize radius;
+
+        if (i == 0) {
+            radius.setWidth(floatValueForLength(blurFilter.stdDeviation(), textureSize.width()) / textureSize.width());
+        } else {
+            radius.setHeight(floatValueForLength(blurFilter.stdDeviation(), textureSize.height()) / textureSize.height());
+        }
+
+        drawBlurred(*sourceTexture, rect, radius);
+
+        std::swap(resultTexture, sourceTexture);
+    }
+
+    // Expand the texture if needed
+    if (currentSize != textureSize) {
+        bindSurface(resultTexture.get());
+
+        FloatRect sourceRect(IntPoint::zero(), currentSize);
+        FloatRect targetRect(IntPoint::zero(), textureSize);
+
+        drawTextureCopy(*sourceTexture, sourceRect, targetRect);
+    }
+
+    return resultTexture;
+}
+
 RefPtr<BitmapTexture> TextureMapperGL::applyFilter(RefPtr<BitmapTexture> sourceTexture, const RefPtr<const FilterOperation>& filter, bool defersLastPass)
 {
+    if (filter->type() == FilterOperation::Type::Blur) {
+        return applyBlurFilter(sourceTexture, static_cast<const BlurFilterOperation&>(*filter));
+    }
+
     RefPtr<BitmapTexture> resultTexture = acquireTextureFromPool(sourceTexture->contentSize(), BitmapTexture::SupportsAlpha);
     RefPtr<BitmapTexture> contentTexture;
     int numPass = getPassesRequiredForFilter(*filter);

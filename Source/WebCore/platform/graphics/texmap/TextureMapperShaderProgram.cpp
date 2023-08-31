@@ -215,6 +215,8 @@ static const char* fragmentTemplateCommon =
         uniform int u_roundedRectNumber;
         uniform vec4 u_roundedRect[ROUNDED_RECT_ARRAY_SIZE];
         uniform mat4 u_roundedRectInverseTransformMatrix[ROUNDED_RECT_INVERSE_TRANSFORM_ARRAY_SIZE];
+        uniform mat4 u_textureCopyMatrix;
+        uniform mat4 u_textureBlurMatrix;
 
         void noop(inout vec4 dummyParameter) { }
         void noop(inout vec4 dummyParameter, vec2 texCoord) { }
@@ -344,10 +346,12 @@ static const char* fragmentTemplateCommon =
             color *= u_filterAmount;
         }
 
-        vec4 sampleColorAtRadius(float radius, vec2 texCoord)
+        vec4 sampleColorAtRadius(float radius, vec2 texCoord, vec4 previousColor)
         {
             vec2 coord = texCoord + radius * u_blurRadius;
-            return texture2D(s_sampler, coord);
+            float droppedOut = float(coord.x <= 0. || coord.y <= 0. || coord.x >= 1. || coord.y >= 1.);
+            coord = (u_textureBlurMatrix * vec4(coord, 0., 1.)).xy;
+            return mix(texture2D(s_sampler, coord), previousColor, droppedOut);
         }
 
         float sampleAlphaAtRadius(float radius, vec2 texCoord)
@@ -356,15 +360,32 @@ static const char* fragmentTemplateCommon =
             return texture2D(s_sampler, coord).a * float(coord.x > 0. && coord.y > 0. && coord.x < 1. && coord.y < 1.);
         }
 
+        void applyTextureCopy(inout vec4 color, vec2 texCoord)
+        {
+            vec2 coord = (u_textureCopyMatrix * vec4(texCoord, 0., 1.)).xy;
+            color = texture2D(s_sampler, coord);
+        }
+
+        // ToDo refactor
         void applyBlurFilter(inout vec4 color, vec2 texCoord)
         {
-            vec4 total = sampleColorAtRadius(0., texCoord) * u_gaussianKernel[0];
+            vec4 white = vec4(1., 1., 1., 1.);
+            vec4 total = sampleColorAtRadius(0., texCoord, white) * u_gaussianKernel[0];
+
             for (int i = 1; i < GAUSSIAN_KERNEL_HALF_WIDTH; i++) {
-                total += sampleColorAtRadius(float(i) * GAUSSIAN_KERNEL_STEP, texCoord) * u_gaussianKernel[i];
-                total += sampleColorAtRadius(float(-1 * i) * GAUSSIAN_KERNEL_STEP, texCoord) * u_gaussianKernel[i];
+                vec4 previousColor = white;
+                previousColor = sampleColorAtRadius(float(i) * GAUSSIAN_KERNEL_STEP, texCoord, previousColor) * u_gaussianKernel[i];
+                total += previousColor;
+            }
+
+            for (int i = -1; i > -GAUSSIAN_KERNEL_HALF_WIDTH; i--) {
+                vec4 previousColor = white;
+                previousColor = sampleColorAtRadius(float(i) * GAUSSIAN_KERNEL_STEP, texCoord, previousColor) * u_gaussianKernel[-i];
+                total += previousColor;
             }
 
             color = total;
+            color.w = 1.;
         }
 
         void applyAlphaBlur(inout vec4 color, vec2 texCoord)
@@ -487,6 +508,7 @@ static const char* fragmentTemplateCommon =
             applyBrightnessFilterIfNeeded(color);
             applyContrastFilterIfNeeded(color);
             applyOpacityFilterIfNeeded(color);
+            applyTextureCopyIfNeeded(color, texCoord);
             applyBlurFilterIfNeeded(color, texCoord);
             applyTextureExternalOESIfNeeded(color, texCoord);
             applyRoundedRectClipIfNeeded(color);
@@ -518,6 +540,7 @@ Ref<TextureMapperShaderProgram> TextureMapperShaderProgram::create(TextureMapper
     SET_APPLIER_FROM_OPTIONS(ContrastFilter);
     SET_APPLIER_FROM_OPTIONS(InvertFilter);
     SET_APPLIER_FROM_OPTIONS(OpacityFilter);
+    SET_APPLIER_FROM_OPTIONS(TextureCopy);
     SET_APPLIER_FROM_OPTIONS(BlurFilter);
     SET_APPLIER_FROM_OPTIONS(AlphaBlur);
     SET_APPLIER_FROM_OPTIONS(ContentTexture);
