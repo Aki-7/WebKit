@@ -89,6 +89,14 @@ public:
     void drawTextureExternalOES(GLuint texture, Flags, const FloatRect&, const TransformationMatrix& modelViewMatrix, float opacity);
 
 private:
+    enum class Direction { X, Y };
+
+    RefPtr<BitmapTexture> applyBlurFilter(RefPtr<BitmapTexture> sourceTexture, const BlurFilterOperation&);
+    RefPtr<BitmapTexture> applyDropShadowFilter(RefPtr<BitmapTexture> sourceTexture, const DropShadowFilterOperation&);
+    RefPtr<BitmapTexture> applySinglePassFilter(RefPtr<BitmapTexture> sourceTexture, const RefPtr<const FilterOperation>&, bool shouldDefer);
+
+    void drawTextureCopy(const BitmapTexture& sourceTexture, const FloatRect& sourceRect, const FloatRect& targetRect);
+    void drawBlurred(const BitmapTexture& sourceTexture, const FloatRect&, float radius, Direction, bool alphaBlur = false);
     void drawFilterPass(const BitmapTexture& sourceTexture, const BitmapTexture* contentTexture, const FilterOperation&, int pass);
     void drawTexturedQuadWithProgram(TextureMapperShaderProgram&, uint32_t texture, Flags, const FloatRect&, const TransformationMatrix& modelViewMatrix, float opacity);
     void drawTexturedQuadWithProgram(TextureMapperShaderProgram&, const Vector<std::pair<GLuint, GLuint> >& texturesAndSamplers, Flags, const FloatRect&, const TransformationMatrix& modelViewMatrix, float opacity);
